@@ -18,7 +18,10 @@ private typealias PlatformColor = NSColor
 // This extension bridges the gap so all PlatformColor(red:green:blue:alpha:) calls
 // in this file compile on macOS without any conditional code at each call site.
 private extension NSColor {
-    convenience init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+    // Use Double parameters — Swift floating-point literals default to Double,
+    // which eliminates ambiguous-overload & type-checker-timeout issues in
+    // large array literals. CGFloat == Double on 64-bit macOS so this is lossless.
+    convenience init(red: Double, green: Double, blue: Double, alpha: Double) {
         self.init(srgbRed: red, green: green, blue: blue, alpha: alpha)
     }
 }
@@ -476,7 +479,7 @@ final class GameScene: SCNScene {
             trunkGeo.firstMaterial?.diffuse.contents =
                 PlatformColor(red: 0.38, green: 0.24, blue: 0.10, alpha: 1)
             let trunk = SCNNode(geometry: trunkGeo)
-            trunk.position.y = h * 0.25
+            trunk.position.y = .init(h * 0.25)
 
             let canopyGeo = SCNSphere(radius: CGFloat(h * 0.45))
             canopyGeo.firstMaterial?.diffuse.contents = PlatformColor(
@@ -486,7 +489,7 @@ final class GameScene: SCNScene {
                 alpha: 1
             )
             let canopy = SCNNode(geometry: canopyGeo)
-            canopy.position.y = h * 0.80
+            canopy.position.y = .init(h * 0.80)
 
             node = SCNNode()
             node.addChildNode(trunk)
@@ -503,7 +506,7 @@ final class GameScene: SCNScene {
             geo.firstMaterial?.diffuse.contents = carColors.randomElement()!
             node = SCNNode(geometry: geo)
             node.position = SCNVector3(x, 0.25, z)
-            node.eulerAngles.y = Float.random(in: 0...(.pi * 2))
+            node.eulerAngles.y = .init(Float.random(in: 0...(.pi * 2)))
             objRadius = 0.6
 
         case 2: // Park bench
@@ -522,7 +525,7 @@ final class GameScene: SCNScene {
                 node.addChildNode(leg)
             }
             node.position = SCNVector3(x, 0, z)
-            node.eulerAngles.y = Float.random(in: 0...(.pi * 2))
+            node.eulerAngles.y = .init(Float.random(in: 0...(.pi * 2)))
             objRadius = 0.5
 
         case 3: // Lamp post
@@ -556,7 +559,7 @@ final class GameScene: SCNScene {
             mailbox.position.y = 1.05
             node.addChildNode(mailbox)
             node.position = SCNVector3(x, 0, z)
-            node.eulerAngles.y = Float.random(in: 0...(.pi * 2))
+            node.eulerAngles.y = .init(Float.random(in: 0...(.pi * 2)))
             objRadius = 0.25
 
         case 5: // Fire hydrant
@@ -572,7 +575,7 @@ final class GameScene: SCNScene {
                 PlatformColor(red: 0.15, green: 0.45, blue: 0.20, alpha: 1)
             node = SCNNode(geometry: geo)
             node.position = SCNVector3(x, 0.425, z)
-            node.eulerAngles.y = Float.random(in: 0...(.pi * 2))
+            node.eulerAngles.y = .init(Float.random(in: 0...(.pi * 2)))
             objRadius = 0.65
 
         default: // Bollard
