@@ -6,141 +6,332 @@
 //
 
 import SwiftUI
-import RealityKit
+import SceneKit
+import Combine
+
+// MARK: - Game State
+
+final class GameState: ObservableObject {
+    @Published var score: Int = 0
+    @Published var holeSize: Float = 1.5
+    @Published var timeRemaining: Int = 120
+    @Published var gameOver: Bool = false
+    @Published var restartToken: UUID = UUID()
+
+    static let minHoleSize: Float = 1.5
+    static let maxHoleSize: Float = 12.0
+
+    var holeProgress: Float {
+        (holeSize - GameState.minHoleSize) / (GameState.maxHoleSize - GameState.minHoleSize)
+    }
+
+    var timeString: String {
+        String(format: "%d:%02d", timeRemaining / 60, timeRemaining % 60)
+    }
+}
+
+// MARK: - Content View
 
 struct ContentView: View {
-    let boxEntity = Entity()
+    @StateObject private var gameState = GameState()
 
     var body: some View {
         ZStack {
-            RealityView { content in
-                // If iOS device that is not the simulator,
-                // use the spatial tracking camera.
-                #if os(iOS) && !targetEnvironment(simulator)
-                content.camera = .spatialTracking
-                #endif
-                createGameScene(content)
-            }
-            #if !os(tvOS)
-            .gesture(tapEntityGesture)
-            #endif
-            // When this app runs on macOS or iOS simulator,
-            // add camera controls that orbit the origin.
-            #if os(macOS) || (os(iOS) && targetEnvironment(simulator))
-            .realityViewCameraControls(.orbit)
-            #endif
+            GameView(gameState: gameState)
+                .ignoresSafeArea()
+                .id(gameState.restartToken)
 
-            // Add instructions to tap the cube.
-            VStack {
-                Spacer()
-                #if os(tvOS)
-                Button(action: {
-                    try? spinEntity(boxEntity)
-                }, label: {
-                    Text("Select to spin the cube!")
-                })
-                #else
-                Text("Tap the cube to spin!")
-                #endif
-            }.padding()
+            if gameState.gameOver {
+                gameOverOverlay
+            } else {
+                hud
+            }
         }
     }
 
-    /// A gesture that spins entities that have a spin component.
-    #if !os(tvOS)
-    var tapEntityGesture: some Gesture {
-        TapGesture().targetedToEntity(where: .has(SpinComponent.self))
-            .onEnded({ gesture in
-                try? spinEntity(gesture.entity)
-            })
-    }
-    #endif
+    // MARK: - HUD
 
-    /// Creates a game scene and adds it to the view content.
-    ///
-    /// - Parameter content: The active content for this RealityKit game.
-    fileprivate func createGameScene(_ content: any RealityViewContentProtocol) {
-        let boxSize: SIMD3<Float> = [0.2, 0.2, 0.2]
-        // A component that shows a red box model.
-        var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: .init(red: 1.0, green: 0.0, blue: 0.0, alpha: 1.0))
-        let boxModel = ModelComponent(
-            mesh: .generateBox(size: boxSize),
-            materials: [material]
-        )
-        // Components that allow interaction and visual feedback.
-        let inputTargetComponent = InputTargetComponent()
-        #if !os(tvOS)
-        let hoverComponent = HoverEffectComponent()
-        #endif
+    private var hud: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                scorePanel
+                Spacer()
+                timerPanel
+                Spacer()
+                sizePanel
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
 
-        // A component that sets the collision shape.
-        let boxCollision = CollisionComponent(shapes: [.generateBox(size: boxSize)])
+            Spacer()
 
-        // A component that stores spin information.
-        let spinComponent = SpinComponent()
-
-        // Set all the entity's components.
-        #if os(tvOS)
-        boxEntity.components.set([
-            boxModel, boxCollision, inputTargetComponent,
-            spinComponent
-        ])
-        #else
-        boxEntity.components.set([
-            boxModel, boxCollision, inputTargetComponent, hoverComponent,
-            spinComponent
-        ])
-        #endif
-
-        // Add the entity to the RealityView content.
-        content.add(boxEntity)
-
-        // If iOS device, except simulator.
-        #if os(iOS) && !targetEnvironment(simulator)
-        // Create an anchor target that is any floor surface
-        // greater than or equal to a 1x1m area.
-        let anchorTarget: AnchoringComponent.Target = .plane(
-            .horizontal, classification: .floor,
-            minimumBounds: .one
-        )
-        boxEntity.components.set(AnchoringComponent(anchorTarget))
-        // Move boxEntity up by half the box height, so that its base is on the ground.
-        boxEntity.position.y += boxSize.y / 2
-        #elseif os(macOS) || os(iOS) || os(tvOS)
-        // If macOS, tvOS, or iOS simulator, add a perspective camera to the scene.
-        let camera = Entity(components: PerspectiveCameraComponent())
-        content.add(camera)
-
-        // Set the camera position and orientation.
-        let cameraLocation: SIMD3<Float> = [1, 1, 2]
-        camera.look(at: .zero, from: cameraLocation, relativeTo: nil)
-        #endif
+            VStack(spacing: 6) {
+                progressBar
+                Text("Drag to move the hole")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.65))
+            }
+            .padding(.bottom, 28)
+            .padding(.horizontal, 20)
+        }
     }
 
-    /// Spins an entity around the y-axis.
-    /// - Parameter entity: The entity to spin.
-    func spinEntity(_ entity: Entity) throws {
-        // Get the entity's spin component.
-        guard let spinComponent = entity.components[SpinComponent.self]
-        else { return }
+    private var scorePanel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("SCORE")
+                .font(.caption.bold())
+                .foregroundColor(.white.opacity(0.75))
+            Text("\(gameState.score)")
+                .font(.system(size: 34, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(12)
+        .background(.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 
-        // Create a spin action that makes one revolution
-        // around the axis from the component.
-        let spinAction = SpinAction(revolutions: 1, localAxis: spinComponent.spinAxis)
+    private var timerPanel: some View {
+        VStack(spacing: 2) {
+            Text("TIME")
+                .font(.caption.bold())
+                .foregroundColor(.white.opacity(0.75))
+            Text(gameState.timeString)
+                .font(.system(size: 30, weight: .bold, design: .monospaced))
+                .foregroundColor(gameState.timeRemaining <= 10 ? .red : .white)
+        }
+        .padding(12)
+        .background(.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 
-        // Create a one second animation that spins an entity.
-        let spinAnimation = try AnimationResource.makeActionAnimation(
-            for: spinAction,
-            duration: 1,
-            bindTarget: .transform
-        )
+    private var sizePanel: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text("HOLE")
+                .font(.caption.bold())
+                .foregroundColor(.white.opacity(0.75))
+            Text(String(format: "%.1f", gameState.holeSize))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(12)
+        .background(.black.opacity(0.45))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 
-        // Play the animation that spins the entity.
-        entity.playAnimation(spinAnimation)
+    // Progress bar: shows hole growth from min→max, with tier unlock markers.
+    private var progressBar: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text("SMALL")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white.opacity(0.6))
+                Spacer()
+                Text("GIANT")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            GeometryReader { geo in
+                let w = geo.size.width
+                // Tier unlock markers at hole sizes 5.0 and 9.0
+                let t3 = CGFloat((5.0 - 1.5) / (12.0 - 1.5))
+                let t4 = CGFloat((9.0 - 1.5) / (12.0 - 1.5))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.2))
+                        .frame(height: 12)
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [.purple, .indigo, .blue, .cyan],
+                            startPoint: .leading, endPoint: .trailing
+                        ))
+                        .frame(
+                            width: w * CGFloat(max(0.02, gameState.holeProgress)),
+                            height: 12
+                        )
+                        .animation(.spring(duration: 0.4), value: gameState.holeProgress)
+                    // Tier 3 marker
+                    Rectangle()
+                        .fill(Color.white.opacity(0.75))
+                        .frame(width: 2, height: 16)
+                        .offset(x: w * t3 - 1, y: -2)
+                    // Tier 4 marker
+                    Rectangle()
+                        .fill(Color.white.opacity(0.75))
+                        .frame(width: 2, height: 16)
+                        .offset(x: w * t4 - 1, y: -2)
+                }
+            }
+            .frame(height: 16)
+        }
+        .padding(.horizontal, 4)
+        .padding(10)
+        .background(.black.opacity(0.40))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Game Over Overlay
+
+    private var gameOverOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+
+            VStack(spacing: 28) {
+                Text("TIME'S UP!")
+                    .font(.system(size: 44, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+
+                VStack(spacing: 6) {
+                    Text("FINAL SCORE")
+                        .font(.caption.bold())
+                        .foregroundColor(.white.opacity(0.7))
+                    Text("\(gameState.score)")
+                        .font(.system(size: 80, weight: .black, design: .rounded))
+                        .foregroundColor(.yellow)
+                }
+
+                Button {
+                    gameState.score = 0
+                    gameState.holeSize = GameState.minHoleSize
+                    gameState.timeRemaining = 120
+                    gameState.gameOver = false
+                    gameState.restartToken = UUID()
+                } label: {
+                    Text("PLAY AGAIN")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 44)
+                        .padding(.vertical, 16)
+                        .background(Color.yellow)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(36)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 28))
+            .padding(24)
+        }
     }
 }
+
+// MARK: - SceneKit Game View (cross-platform)
+
+// Shared coordinator handles pan gesture on both iOS and macOS.
+final class GameViewCoordinator: NSObject {
+    var gameScene: GameScene?
+    weak var scnView: SCNView?
+    var lastTranslation: CGPoint = .zero
+}
+
+// Shared SCNView factory — called by both platform variants.
+private func configureScnView(
+    _ scnView: SCNView,
+    gameState: GameState,
+    coordinator: GameViewCoordinator
+) {
+    let scene = GameScene()
+
+    scene.onScoreUpdate = { score, size in
+        DispatchQueue.main.async {
+            gameState.score = score
+            gameState.holeSize = size
+        }
+    }
+    scene.onTimerUpdate = { time in
+        DispatchQueue.main.async {
+            gameState.timeRemaining = time
+        }
+    }
+    scene.onGameOver = {
+        DispatchQueue.main.async {
+            gameState.gameOver = true
+        }
+    }
+
+    scnView.scene = scene
+    scnView.pointOfView = scene.cameraNode
+    scnView.allowsCameraControl = false
+    scnView.antialiasingMode = .multisampling4X
+
+    coordinator.gameScene = scene
+    coordinator.scnView = scnView
+}
+
+// MARK: iOS / tvOS
+
+#if os(iOS) || os(tvOS)
+struct GameView: UIViewRepresentable {
+    @ObservedObject var gameState: GameState
+
+    func makeUIView(context: Context) -> SCNView {
+        let scnView = SCNView()
+        configureScnView(scnView, gameState: gameState, coordinator: context.coordinator)
+        scnView.backgroundColor = UIColor(red: 0.53, green: 0.81, blue: 0.98, alpha: 1.0)
+        let pan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(GameViewCoordinator.handlePan(_:))
+        )
+        scnView.addGestureRecognizer(pan)
+        return scnView
+    }
+
+    func updateUIView(_ uiView: SCNView, context: Context) {}
+    func makeCoordinator() -> GameViewCoordinator { GameViewCoordinator() }
+}
+
+extension GameViewCoordinator {
+    @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard let scene = gameScene, let view = scnView else { return }
+        let t = gesture.translation(in: view)
+        if gesture.state == .began {
+            lastTranslation = t
+        } else if gesture.state == .changed {
+            scene.moveHole(dx: Float(t.x - lastTranslation.x),
+                           dz: Float(t.y - lastTranslation.y))
+            lastTranslation = t
+        }
+    }
+}
+
+// MARK: macOS
+
+#elseif os(macOS)
+struct GameView: NSViewRepresentable {
+    @ObservedObject var gameState: GameState
+
+    func makeNSView(context: Context) -> SCNView {
+        let scnView = SCNView()
+        configureScnView(scnView, gameState: gameState, coordinator: context.coordinator)
+        scnView.backgroundColor = NSColor(calibratedRed: 0.53, green: 0.81, blue: 0.98, alpha: 1.0)
+        let pan = NSPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(GameViewCoordinator.handlePanMac(_:))
+        )
+        scnView.addGestureRecognizer(pan)
+        return scnView
+    }
+
+    func updateNSView(_ nsView: SCNView, context: Context) {}
+    func makeCoordinator() -> GameViewCoordinator { GameViewCoordinator() }
+}
+
+extension GameViewCoordinator {
+    @objc func handlePanMac(_ gesture: NSPanGestureRecognizer) {
+        guard let scene = gameScene, let view = scnView else { return }
+        let t = gesture.translation(in: view)
+        if gesture.state == .began {
+            lastTranslation = t
+        } else if gesture.state == .changed {
+            scene.moveHole(dx: Float(t.x - lastTranslation.x),
+                           dz: Float(t.y - lastTranslation.y))
+            lastTranslation = t
+        }
+    }
+}
+#endif
 
 #Preview {
     ContentView()
 }
+
+
