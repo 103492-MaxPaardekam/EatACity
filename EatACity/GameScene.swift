@@ -97,6 +97,9 @@ final class GameScene: SCNScene {
     private var tier3Nodes: [SCNNode] = []
     private var tier4Nodes: [SCNNode] = []
 
+    // Tracks nodes currently showing "too small" feedback
+    private var shakingNodes: Set<ObjectIdentifier> = []
+
     // Audio
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -633,32 +636,111 @@ final class GameScene: SCNScene {
         let hx = Float(holeNode.position.x)
         let hz = Float(holeNode.position.z)
         var toEat: [CityObjectInfo] = []
+        var tooSmall: [CityObjectInfo] = []
 
         for info in cityObjectInfos {
             guard info.node.parent != nil else { continue }
-            guard info.objectRadius < holeRadius else { continue }
             let dx = Float(info.node.position.x) - hx
             let dz = Float(info.node.position.z) - hz
-            if (dx * dx + dz * dz) < (holeRadius * holeRadius) {
-                toEat.append(info)
+            let distSq = dx * dx + dz * dz
+            if info.objectRadius < holeRadius {
+                // Can be eaten: center must be inside the hole
+                if distSq < holeRadius * holeRadius {
+                    toEat.append(info)
+                }
+            } else {
+                // Too big: give feedback when hole overlaps the object's footprint
+                let threshold = info.objectRadius * 0.85
+                if distSq < threshold * threshold {
+                    tooSmall.append(info)
+                }
             }
         }
 
         toEat.forEach { eat($0) }
+        tooSmall.forEach { showTooSmall($0) }
+    }
+
+    private func showTooSmall(_ info: CityObjectInfo) {
+        let id = ObjectIdentifier(info.node)
+        guard !shakingNodes.contains(id) else { return }
+        shakingNodes.insert(id)
+
+        // Shake the object sideways
+        let shake = SCNAction.sequence([
+            SCNAction.moveBy(x: 0.18, y: 0, z: 0, duration: 0.06),
+            SCNAction.moveBy(x: -0.36, y: 0, z: 0, duration: 0.12),
+            SCNAction.moveBy(x: 0.18, y: 0, z: 0, duration: 0.06)
+        ])
+        info.node.runAction(shake)
+
+        // Brief red flash on all geometry
+        info.node.enumerateHierarchy { child, _ in
+            child.geometry?.materials.forEach { mat in
+                let saved = mat.emission.contents
+                mat.emission.contents = PlatformColor(red: 1, green: 0.15, blue: 0.15, alpha: 1)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    mat.emission.contents = saved
+                }
+            }
+        }
+
+        // Cooldown before next shake
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            self?.shakingNodes.remove(id)
+        }
     }
 
     private func eat(_ info: CityObjectInfo) {
         cityObjectInfos.removeAll { $0.node === info.node }
-        info.node.physicsBody = nil
+        tier3Nodes.removeAll { $0 === info.node }
+        tier4Nodes.removeAll { $0 === info.node }
+        shakingNodes.remove(ObjectIdentifier(info.node))
 
-        let sink = SCNAction.group([
-            SCNAction.move(
-                to: SCNVector3(holeNode.position.x, -5, holeNode.position.z),
-                duration: 0.35
-            ),
-            SCNAction.scale(to: 0.05, duration: 0.35)
-        ])
-        info.node.runAction(SCNAction.sequence([sink, .removeFromParentNode()]))
+        // Build a bounding-box physics shape so compound nodes tumble correctly
+        let (minBB, maxBB) = info.node.boundingBox
+        let bbW = max(CGFloat(maxBB.x - minBB.x), 0.1)
+        let bbH = max(CGFloat(maxBB.y - minBB.y), 0.1)
+        let bbD = max(CGFloat(maxBB.z - minBB.z), 0.1)
+        let fallShape = SCNPhysicsShape(
+            geometry: SCNBox(width: bbW, height: bbH, length: bbD, chamferRadius: 0),
+            options: nil
+        )
+        let fallBody = SCNPhysicsBody(type: .dynamic, shape: fallShape)
+        fallBody.categoryBitMask = 0
+        fallBody.collisionBitMask = 0
+        fallBody.contactTestBitMask = 0
+        fallBody.mass = 1.0
+        fallBody.damping = 0.0
+        fallBody.angularDamping = 0.05
+        info.node.physicsBody = fallBody
+
+        // Pull toward hole center and drive downward
+        let nx = Float(info.node.position.x)
+        let nz = Float(info.node.position.z)
+        let hx = Float(holeNode.position.x)
+        let hz = Float(holeNode.position.z)
+        fallBody.applyForce(
+            SCNVector3((hx - nx) * 4.0, -28, (hz - nz) * 4.0),
+            asImpulse: true
+        )
+
+        // Random tumble torque
+        var ax = Float.random(in: -1...1)
+        var ay = Float.random(in: -1...1)
+        var az = Float.random(in: -1...1)
+        let axLen = sqrt(ax * ax + ay * ay + az * az)
+        if axLen > 0 { ax /= axLen; ay /= axLen; az /= axLen }
+        fallBody.applyTorque(
+            SCNVector4(ax, ay, az, Float.random(in: 4...9)),
+            asImpulse: true
+        )
+
+        // Remove after the object has fallen below the surface
+        info.node.runAction(SCNAction.sequence([
+            SCNAction.wait(duration: 1.4),
+            SCNAction.removeFromParentNode()
+        ]))
 
         spawnEatParticles()
         playEatSound(radius: info.objectRadius)
