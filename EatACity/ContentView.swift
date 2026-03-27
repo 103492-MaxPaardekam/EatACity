@@ -34,17 +34,22 @@ final class GameState: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var gameState = GameState()
+    @State private var gameStarted = false
 
     var body: some View {
         ZStack {
-            GameView(gameState: gameState)
-                .ignoresSafeArea()
-                .id(gameState.restartToken)
+            if gameStarted {
+                GameView(gameState: gameState)
+                    .ignoresSafeArea()
+                    .id(gameState.restartToken)
 
-            if gameState.gameOver {
-                gameOverOverlay
+                if gameState.gameOver {
+                    gameOverOverlay
+                } else {
+                    hud
+                }
             } else {
-                hud
+                startScreen
             }
         }
     }
@@ -196,6 +201,7 @@ struct ContentView: View {
                     gameState.timeRemaining = 120
                     gameState.gameOver = false
                     gameState.restartToken = UUID()
+                    gameStarted = false
                 } label: {
                     Text("PLAY AGAIN")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
@@ -210,6 +216,78 @@ struct ContentView: View {
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 28))
             .padding(24)
+        }
+    }
+
+    // MARK: - Start Screen
+
+    private var startScreen: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.04, green: 0.04, blue: 0.18),
+                    Color(red: 0.06, green: 0.20, blue: 0.40)
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                VStack(spacing: 4) {
+                    Text("EAT A")
+                        .font(.system(size: 48, weight: .black, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                    Text("CITY")
+                        .font(.system(size: 88, weight: .black, design: .rounded))
+                        .foregroundColor(.yellow)
+                        .shadow(color: .yellow.opacity(0.55), radius: 16)
+                }
+
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 14) {
+                    instructionRow(icon: "⬛", label: "Drag to move your black hole")
+                    instructionRow(icon: "🏠", label: "Eat buildings to grow bigger")
+                    instructionRow(icon: "🔓", label: "Grow large enough to eat skyscrapers")
+                }
+                .padding(20)
+                .background(.black.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal, 36)
+
+                Spacer()
+
+                Button {
+                    gameStarted = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "play.fill")
+                        Text("PLAY")
+                    }
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 60)
+                    .padding(.vertical, 20)
+                    .background(Color.yellow)
+                    .clipShape(Capsule())
+                    .shadow(color: .yellow.opacity(0.5), radius: 14)
+                }
+
+                Spacer()
+            }
+        }
+    }
+
+    private func instructionRow(icon: String, label: String) -> some View {
+        HStack(spacing: 14) {
+            Text(icon)
+                .font(.title2)
+            Text(label)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white.opacity(0.9))
+            Spacer()
         }
     }
 }
