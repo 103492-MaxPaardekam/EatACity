@@ -18,10 +18,8 @@ private typealias PlatformColor = NSColor
 // This extension bridges the gap so all PlatformColor(red:green:blue:alpha:) calls
 // in this file compile on macOS without any conditional code at each call site.
 private extension NSColor {
-    // Use Double parameters — Swift floating-point literals default to Double,
-    // which eliminates ambiguous-overload & type-checker-timeout issues in
-    // large array literals. CGFloat == Double on 64-bit macOS so this is lossless.
-    convenience init(red: Double, green: Double, blue: Double, alpha: Double) {
+    // NSColor lacks the UIColor-style init(red:green:blue:alpha:) with CGFloat params.
+    convenience init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
         self.init(srgbRed: red, green: green, blue: blue, alpha: alpha)
     }
 }
@@ -288,20 +286,22 @@ final class GameScene: SCNScene {
 
     // MARK: - City Spawning
 
-    private static let buildingColors: [PlatformColor] = [
-        PlatformColor(red: 0.78, green: 0.78, blue: 0.82, alpha: 1),
-        PlatformColor(red: 0.65, green: 0.72, blue: 0.78, alpha: 1),
-        PlatformColor(red: 0.82, green: 0.68, blue: 0.58, alpha: 1),
-        PlatformColor(red: 0.58, green: 0.68, blue: 0.80, alpha: 1),
-        PlatformColor(red: 0.72, green: 0.80, blue: 0.65, alpha: 1),
-        PlatformColor(red: 0.90, green: 0.85, blue: 0.70, alpha: 1),
-    ]
+    private static let buildingColors: [PlatformColor] = {
+        let c0: PlatformColor = .init(red: 0.78, green: 0.78, blue: 0.82, alpha: 1)
+        let c1: PlatformColor = .init(red: 0.65, green: 0.72, blue: 0.78, alpha: 1)
+        let c2: PlatformColor = .init(red: 0.82, green: 0.68, blue: 0.58, alpha: 1)
+        let c3: PlatformColor = .init(red: 0.58, green: 0.68, blue: 0.80, alpha: 1)
+        let c4: PlatformColor = .init(red: 0.72, green: 0.80, blue: 0.65, alpha: 1)
+        let c5: PlatformColor = .init(red: 0.90, green: 0.85, blue: 0.70, alpha: 1)
+        return [c0, c1, c2, c3, c4, c5]
+    }()
 
-    private static let skyscraperColors: [PlatformColor] = [
-        PlatformColor(red: 0.20, green: 0.30, blue: 0.50, alpha: 1),
-        PlatformColor(red: 0.30, green: 0.20, blue: 0.45, alpha: 1),
-        PlatformColor(red: 0.15, green: 0.35, blue: 0.40, alpha: 1),
-    ]
+    private static let skyscraperColors: [PlatformColor] = {
+        let c0: PlatformColor = .init(red: 0.20, green: 0.30, blue: 0.50, alpha: 1)
+        let c1: PlatformColor = .init(red: 0.30, green: 0.20, blue: 0.45, alpha: 1)
+        let c2: PlatformColor = .init(red: 0.15, green: 0.35, blue: 0.40, alpha: 1)
+        return [c0, c1, c2]
+    }()
 
     private func spawnCity() {
         let step: Float = 10
@@ -498,10 +498,14 @@ final class GameScene: SCNScene {
             objRadius = h * 0.35
 
         case 1: // Car
-            let carColors: [PlatformColor] = [
-                .systemRed, .systemBlue, .yellow, .white,
-                .systemOrange, .systemGreen, .systemTeal
-            ]
+            let ca0: PlatformColor = .systemRed
+            let ca1: PlatformColor = .systemBlue
+            let ca2: PlatformColor = .yellow
+            let ca3: PlatformColor = .white
+            let ca4: PlatformColor = .systemOrange
+            let ca5: PlatformColor = .systemGreen
+            let ca6: PlatformColor = .systemTeal
+            let carColors: [PlatformColor] = [ca0, ca1, ca2, ca3, ca4, ca5, ca6]
             let geo = SCNBox(width: 1.2, height: 0.5, length: 0.65, chamferRadius: 0.1)
             geo.firstMaterial?.diffuse.contents = carColors.randomElement()!
             node = SCNNode(geometry: geo)
@@ -610,12 +614,14 @@ final class GameScene: SCNScene {
 
         let speed: Float = 0.035
         let bound: Float = 40
-        holeNode.position.x = max(-bound, min(bound, holeNode.position.x + dx * speed))
-        holeNode.position.z = max(-bound, min(bound, holeNode.position.z + dz * speed))
+        let newX = max(-bound, min(bound, Float(holeNode.position.x) + dx * speed))
+        let newZ = max(-bound, min(bound, Float(holeNode.position.z) + dz * speed))
+        holeNode.position.x = CGFloat(newX)
+        holeNode.position.z = CGFloat(newZ)
 
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.1
-        cameraNode.position = SCNVector3(holeNode.position.x, 25, holeNode.position.z + 18)
+        cameraNode.position = SCNVector3(newX, 25, newZ + 18)
         SCNTransaction.commit()
 
         checkEating()
@@ -624,15 +630,15 @@ final class GameScene: SCNScene {
     // MARK: - Eating Detection
 
     private func checkEating() {
-        let hx = holeNode.position.x
-        let hz = holeNode.position.z
+        let hx = Float(holeNode.position.x)
+        let hz = Float(holeNode.position.z)
         var toEat: [CityObjectInfo] = []
 
         for info in cityObjectInfos {
             guard info.node.parent != nil else { continue }
             guard info.objectRadius < holeRadius else { continue }
-            let dx = info.node.position.x - hx
-            let dz = info.node.position.z - hz
+            let dx = Float(info.node.position.x) - hx
+            let dz = Float(info.node.position.z) - hz
             if (dx * dx + dz * dz) < (holeRadius * holeRadius) {
                 toEat.append(info)
             }
